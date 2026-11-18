@@ -11,8 +11,10 @@ async function main() {
   // Prefer a direct (non-pooled) URL for DDL if provided; transaction poolers can reject some statements.
   const url = process.env.DATABASE_URL_UNPOOLED || process.env.DATABASE_URL;
   if (!url) {
-    console.error("DATABASE_URL is not set — cannot run migrations.");
-    process.exit(1);
+    // Don't fail the build: on Vercel the database is usually connected after the first deploy.
+    // The app itself refuses to run without DATABASE_URL, so this can't go unnoticed.
+    console.warn("WARNING: DATABASE_URL is not set — skipping migrations. Connect a database and redeploy.");
+    return;
   }
   const pool = new Pool({ connectionString: url, max: 1 });
   try {
