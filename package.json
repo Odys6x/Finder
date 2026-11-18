@@ -1,0 +1,51 @@
+{
+  "name": "schoolpath",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint src scripts",
+    "typecheck": "next typegen && tsc --noEmit",
+    "test": "vitest run",
+    "data:snapshot": "tsx --env-file-if-exists=.env.local scripts/pull-snapshot.ts",
+    "db:generate": "drizzle-kit generate",
+    "eval:chat": "tsx --env-file-if-exists=.env.local --conditions=react-server scripts/chat-eval.ts",
+    "db:migrate": "tsx --env-file-if-exists=.env.local scripts/migrate.ts",
+    "vercel-build": "tsx scripts/migrate.ts && next build"
+  },
+  "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "^1.1.2",
+    "@anthropic-ai/sdk": "^1.10.0",
+    "@electric-sql/pglite": "^0.5.16",
+    "drizzle-orm": "^0.45.4",
+    "groq-sdk": "^1.6.0",
+    "html-to-image": "^1.11.13",
+    "leaflet": "^1.9.4",
+    "next": "16.4.6",
+    "papaparse": "^5.7.1",
+    "pg": "^8.23.1",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "server-only": "^0.0.1",
+    "stripe": "^23.1.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/turbopack": "4.3.3",
+    "@types/leaflet": "^1.9.22",
+    "@types/node": "^24.19.2",
+    "@types/papaparse": "^5.5.2",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "drizzle-kit": "^0.31.11",
+    "eslint": "^9",
+    "eslint-config-next": "16.4.6",
+    "tailwindcss": "4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5",
+    "vitest": "^5.1.1"
+  }
+}

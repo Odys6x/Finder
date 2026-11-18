@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --color-ink: #13212e;
+  --color-muted: #5b6b79;
+  --color-line: #e2e8ee;
+  --color-paper: #f6f8fa;
+  --color-brand: #0f6e6a;
+  --color-brand-dark: #0b524f;
+  --color-brand-soft: #e3f2f1;
+  --color-safe: #136c33;
+  --color-safe-soft: #e6f4ea;
+  --color-border: #a15c00;
+  --color-border-soft: #fdf1dc;
+  --color-reach: #b42318;
+  --color-reach-soft: #fdecea;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+}
+
+/* Small component primitives */
+@utility card {
+  @apply rounded-2xl border border-line bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)];
+}
+@utility btn {
+  @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+}
+@utility btn-primary {
+  @apply btn bg-brand text-white hover:bg-brand-dark;
+}
+@utility btn-ghost {
+  @apply btn border border-line bg-white text-ink hover:bg-paper;
+}
+@utility input {
+  @apply min-h-11 w-full rounded-xl border border-line bg-white px-3 text-base outline-none focus:border-brand;
+}
+@utility label {
+  @apply mb-1 block text-sm font-medium text-ink;
+}
+@utility chip {
+  @apply inline-flex items-center gap-1 rounded-full border border-line bg-white px-3 py-1 text-xs font-medium text-ink;
+}
+@utility chip-on {
+  @apply chip border-brand bg-brand-soft text-brand-dark;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: white;
+  }
+  .card {
+    box-shadow: none;
+    break-inside: avoid;
+  }
+}
