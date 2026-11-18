@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardFacts, interestsFromGroups, nextStep, parsePostalInput, parseScoreInput } from "./guided";
+import { cardFacts, interestsFromGroups, nextStep, onboardingSteps, parsePostalInput, parseQuickAnswer, parseScoreInput, schoolInitials } from "./guided";
 import type { MatchItem } from "./matching";
 import { EMPTY_PROFILE } from "./types";
 
@@ -10,11 +10,62 @@ describe("nextStep", () => {
     expect(nextStep({ ...EMPTY_PROFILE, psleScore: 21 }, ["score"])).toBe("pg");
     expect(nextStep({ ...EMPTY_PROFILE, psleScore: 25 }, ["score"])).toBe("pg");
   });
-  it("skips travel when there is no home", () => {
-    expect(nextStep({ ...EMPTY_PROFILE, psleScore: 12 }, ["score", "home", "sex", "interests"])).toBe("results");
-    const withHome = { ...EMPTY_PROFILE, psleScore: 12, home: { lat: 1.3, lng: 103.9, label: "x" } };
-    expect(nextStep(withHome, ["score", "home", "sex", "interests"])).toBe("travel");
+  it("goes straight to results once score and home are answered (the rest are optional boosters)", () => {
+    expect(nextStep({ ...EMPTY_PROFILE, psleScore: 12 }, ["score", "home"])).toBe("results");
   });
+});
+
+describe("onboardingSteps", () => {
+  it("is 2 questions for a clear score, 3 when the posting group is ambiguous", () => {
+    expect(onboardingSteps({ ...EMPTY_PROFILE, psleScore: 12 }, ["score"])).toEqual(["score", "home"]);
+    expect(onboardingSteps({ ...EMPTY_PROFILE, psleScore: 21 }, ["score"])).toEqual(["score", "pg", "home"]);
+  });
+});
+
+describe("parseQuickAnswer", () => {
+  it("reads everything from one line", () => {
+    const r = parseQuickAnswer("12, 529889, girl, likes basketball and music, within 30 min");
+    expect(r.patch).toMatchObject({ psleScore: 12, postingGroup: 3, childSex: "F", maxMinutes: 30 });
+    expect(r.postal).toBe("529889");
+    expect(r.interestIds).toEqual(["ball", "music"]);
+    expect(r.answered).toEqual(["score", "pg"]);
+    expect(r.understood).toEqual(["🚇 ≤ 30 min", "Score 12", "PG3", "👧 Girl", "🏀 Ball games", "🎵 Music"]);
+  });
+  it("handles just a score", () => {
+    expect(parseQuickAnswer("12").patch).toMatchObject({ psleScore: 12, postingGroup: 3 });
+  });
+  it("leaves the posting group open for ambiguous scores unless stated", () => {
+    expect(parseQuickAnswer("21").answered).toEqual(["score"]);
+    expect(parseQuickAnswer("21 PG2").patch.postingGroup).toBe(2);
+    expect(parseQuickAnswer("21 PG2").answered).toEqual(["score", "pg"]);
+  });
+  it("doesn't mistake travel limits or postal digits for a score", () => {
+    const r = parseQuickAnswer("son, 529889, within 5 km");
+    expect(r.patch.psleScore).toBeUndefined();
+    expect(r.patch).toMatchObject({ childSex: "M", maxKm: 5 });
+  });
+  it("understands natural phrasing", () => {
+    const r = parseQuickAnswer("My daughter scored 9, she loves robotics and drama, co-ed near home, interested in IP");
+    expect(r.patch).toMatchObject({ psleScore: 9, childSex: "F", naturePref: "co-ed", maxKm: 5, track: "ip" });
+    expect(r.interestIds).toEqual(["tech", "stage"]);
+  });
+  it("doesn't count martial arts as art", () => {
+    expect(parseQuickAnswer("he does martial arts").interestIds).toEqual(["martial"]);
+  });
+  it("ignores out-of-range numbers", () => {
+    expect(parseQuickAnswer("3").patch.psleScore).toBeUndefined();
+    expect(parseQuickAnswer("31").patch.psleScore).toBeUndefined();
+  });
+});
+
+describe("schoolInitials", () => {
+  it.each([
+    ["Bedok Green Secondary School", "BG"],
+    ["Anglican High School", "AH"],
+    ["CHIJ St. Nicholas Girls' School", "CS"],
+    ["Raffles Institution", "RI"],
+    ["Methodist Girls' School (Secondary)", "MG"],
+  ])("%s → %s", (n, i) => expect(schoolInitials(n)).toBe(i));
 });
 
 describe("parseScoreInput", () => {

@@ -21,7 +21,8 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
     <html lang="en-SG" className={jakarta.variable}>
       <body className="flex min-h-dvh flex-col font-sans antialiased">
         {/* Required on every screen (spec §8). */}
-        <div role="note" className="no-print bg-ink px-4 py-1 text-center text-[11px] leading-snug text-white/85">
+        <div role="note" className="no-print border-b border-line bg-card px-4 py-1.5 text-center text-[11px] leading-snug text-muted">
+          <span aria-hidden>ⓘ </span>
           {DISCLAIMER}
         </div>
         {children}

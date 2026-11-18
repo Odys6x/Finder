@@ -8,10 +8,10 @@ import { refreshMe, useMe } from "@/lib/client/me";
 import { useSchoolIndex } from "@/lib/client/school-index";
 import { clearAllLocalData, useProfile, useShortlist } from "@/lib/client/store";
 import { formatKm } from "@/lib/geo";
-import { INTEREST_GROUPS, interestsFromGroups, nextStep, parsePostalInput, parseScoreInput, type Step } from "@/lib/guided";
+import { INTEREST_GROUPS, interestsFromGroups, nextStep, onboardingSteps, parsePostalInput, parseQuickAnswer, type Step } from "@/lib/guided";
 import { likelyPostingGroups } from "@/lib/banding";
 import type { MatchItem } from "@/lib/matching";
-import { EMPTY_PROFILE, type Band, type PostingGroup, type Profile } from "@/lib/types";
+import { EMPTY_PROFILE, type Band, type Profile } from "@/lib/types";
 import { title } from "@/lib/vocab";
 import { AppHeader } from "../AppHeader";
 import { BAND_COLOR } from "../BandBadge";
@@ -40,6 +40,7 @@ interface MatchData {
 }
 
 type Msg = { id: string } & (
+  | { kind: "welcome" }
   | { kind: "bot"; text: string }
   | { kind: "user"; text: string }
   | { kind: "ask"; step: Step }
@@ -76,10 +77,8 @@ function loadThread(): Thread | null {
   }
 }
 
-const GREETING = "Hi! I'm your SchoolPath guide 👋 Answer a few quick questions and I'll shortlist secondary schools that fit your child. Your answers stay on this phone.";
-
 const ASK_TEXT: Record<Step, (p: Profile) => string> = {
-  score: () => "What's your child's PSLE score? Just type it below (4 is the best, 30 the highest).",
+  score: () => "First, what's your child's PSLE score?",
   pg: (p) => {
     const g = likelyPostingGroups(p.psleScore ?? 0);
     return `A score of ${p.psleScore} can be in ${g.map((x) => `PG${x}`).join(" or ")}. Which posting group is on the results slip?`;
@@ -115,7 +114,7 @@ export function ChatApp() {
     }, 0);
   }, [askCode, idx]);
   const [busy, setBusy] = useState(false);
-  const [sheet, setSheet] = useState<null | "shortlist" | { map: MatchItem[] }>(null);
+  const [sheet, setSheet] = useState<null | "shortlist" | "refine" | "interests" | { map: MatchItem[] }>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   // Latest profile for event handlers. Handlers that change it also update the ref directly,
@@ -161,13 +160,18 @@ export function ChatApp() {
 
   /* ---------------------------------------------------------- matching */
 
+  /** Show results. With `replaceId`, refresh an existing results block in place (no extra scrolling). */
   const runResults = useCallback(
-    async (p: Profile, intro?: string) => {
-      const id = uid();
-      push(
-        { id: uid(), kind: "bot", text: intro ?? ASK_TEXT.results(p) },
-        { id, kind: "results", data: null },
-      );
+    async (p: Profile, intro?: string, replaceId?: string) => {
+      const id = replaceId ?? uid();
+      if (replaceId) {
+        patchMsg(id, (m) => ({ ...m, data: null, failed: false }) as Msg);
+      } else {
+        push(
+          { id: uid(), kind: "bot", text: intro ?? ASK_TEXT.results(p) },
+          { id, kind: "results", data: null },
+        );
+      }
       let tries = 0;
       const load = async () => {
         try {
@@ -186,11 +190,12 @@ export function ChatApp() {
         }
       };
       await load();
-      push({
-        id: uid(),
-        kind: "suggest",
-        items: ["How should I order my 6 choices?", "Explain Safe / Borderline / Reach", "Which schools near me have Robotics?"],
-      });
+      if (!replaceId)
+        push({
+          id: uid(),
+          kind: "suggest",
+          items: ["How should I order my 6 choices?", "Explain Safe / Borderline / Reach", "Which schools near me have Robotics?"],
+        });
     },
     [push, patchMsg],
   );
@@ -198,13 +203,14 @@ export function ChatApp() {
   /* ------------------------------------------------------- guided steps */
 
   const advance = useCallback(
-    (p: Profile, done: Step[], userText: string | null) => {
+    (p: Profile, done: Step[], userText: string | null, ack?: string) => {
       const step = nextStep(p, done);
       setThread((t) => ({
         answered: done,
         msgs: [
           ...t.msgs,
           ...(userText ? [{ id: uid(), kind: "user" as const, text: userText }] : []),
+          ...(ack ? [{ id: uid(), kind: "bot" as const, text: ack }] : []),
           ...(step === "results" ? [] : [{ id: uid(), kind: "bot" as const, text: ASK_TEXT[step](p) }, { id: uid(), kind: "ask" as const, step }]),
         ],
       }));
@@ -233,6 +239,67 @@ export function ChatApp() {
       push({ id: uid(), kind: "bot", text: "I couldn't look that up just now. Try again, or tap Skip." });
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * One-line answers: "12, 529889, girl, likes basketball" fills in everything it can and only
+   * the missing questions are asked. Returns a friendly error, or null when accepted.
+   */
+  function quickAnswer(text: string): string | null {
+    const q = parseQuickAnswer(text);
+    if (q.patch.psleScore === undefined && profileRef.current.psleScore === null && !answered.includes("score")) {
+      return q.understood.length || q.postal
+        ? "Got the rest. Please add the PSLE score too (4 to 30)."
+        : "Please enter a score from 4 to 30.";
+    }
+    const done = [...new Set([...answered, ...q.answered])];
+    const ack = q.understood.length > 2 || q.postal ? `Got it: ${q.understood.join(" · ")}${q.postal ? " · 🏠 " + q.postal : ""}` : undefined;
+    const base = { ...profileRef.current, ...q.patch };
+    if (!q.postal) {
+      saveProfile(base);
+      advance(base, done, text, ack);
+      return null;
+    }
+    // Look up the postal code, then continue (shows "home" as answered either way).
+    setBusy(true);
+    fetch(`/api/geocode?q=${q.postal}`)
+      .then((r) => r.json())
+      .then((b) => {
+        const p = b.result ? { ...base, homePostal: q.postal!, home: b.result } : base;
+        saveProfile(p);
+        advance(p, b.result ? [...done, "home"] : done, text, b.result ? ack : `${ack ?? ""} I couldn't find postal code ${q.postal}, so please check it.`.trim());
+      })
+      .catch(() => {
+        saveProfile(base);
+        advance(base, done, text, ack);
+      })
+      .finally(() => setBusy(false));
+    return null;
+  }
+
+  /** Typed answers from the inline boxes. Returns a friendly error, or null. */
+  function onTyped(step: Step, text: string): string | null {
+    if (step === "score") return quickAnswer(text);
+    if (step === "home") {
+      const postal = parsePostalInput(text);
+      if (!postal) return "Postal codes have 6 digits.";
+      void answerHome(postal);
+      return null;
+    }
+    return null;
+  }
+
+  /** Adjust matches. Updates the latest results block in place instead of adding a new one. */
+  function refine(patch: Partial<Profile>, label: string) {
+    const p = { ...profileRef.current, ...patch };
+    saveProfile(p);
+    setSheet(null);
+    const last = [...msgs].reverse().find((m) => m.kind === "results");
+    if (last) void runResults(p, undefined, last.id);
+    else {
+      push({ id: uid(), kind: "user", text: label });
+      void runResults(p, "Updated 👇");
     }
   }
 
@@ -287,10 +354,10 @@ export function ChatApp() {
     if (!text || busy) return;
     setInput("");
     if (pending?.step === "score") {
-      const n = parseScoreInput(text);
-      if (n !== null) {
-        const pgs = likelyPostingGroups(n);
-        return answer("score", { psleScore: n, postingGroup: (pgs[0] ?? null) as PostingGroup | null }, text);
+      // Anything with a score in it is an answer; other text is a question for the AI.
+      if (parseQuickAnswer(text).patch.psleScore !== undefined) {
+        quickAnswer(text);
+        return;
       }
     }
     if (pending?.step === "home") {
@@ -312,14 +379,27 @@ export function ChatApp() {
     setThread(freshThread(EMPTY_PROFILE));
   }
 
-  const placeholder =
-    pending?.step === "score" ? "Type the PSLE score, e.g. 12" : pending?.step === "home" ? "6-digit postal code" : "Ask anything about schools…";
+  const placeholder = "Ask anything about schools…";
+  const steps = onboardingSteps(profile, answered);
+  const progress = pending && steps.includes(pending.step) ? { i: steps.indexOf(pending.step) + 1, n: steps.length } : null;
 
   /* -------------------------------------------------------------- render */
 
   return (
     <>
       <AppHeader onShortlist={() => setSheet("shortlist")} />
+      {progress && (
+        <div className="no-print sticky top-14 z-20 bg-paper/95 backdrop-blur" role="progressbar" aria-valuemin={1} aria-valuemax={progress.n} aria-valuenow={progress.i} aria-label="Questions">
+          <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-2">
+            <span className="shrink-0 text-xs font-bold text-brand">
+              Question {progress.i} of {progress.n}
+            </span>
+            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
+              <div className="h-full rounded-full bg-brand transition-all duration-500" style={{ width: `${((progress.i - 1) / progress.n) * 100}%` }} />
+            </div>
+          </div>
+        </div>
+      )}
       <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 pt-4">
         <div className="flex-1 space-y-3 pb-4" aria-live="polite">
           {msgs.length > 3 && (
@@ -334,6 +414,10 @@ export function ChatApp() {
               key={m.id}
               m={m}
               last={i === msgs.length - 1}
+              avatar={msgs[i - 1]?.kind !== "bot"}
+              onTyped={onTyped}
+              onRefineOpen={() => setSheet("refine")}
+              onInterestsOpen={() => setSheet("interests")}
               busy={busy}
               pending={pending?.id === m.id}
               profile={profile}
@@ -343,12 +427,7 @@ export function ChatApp() {
               onAsk={askAI}
               onApply={applyAction}
               onMap={(items) => setSheet({ map: items })}
-              onRefine={(patch, label) => {
-                const p = { ...profileRef.current, ...patch };
-                saveProfile(p);
-                push({ id: uid(), kind: "user", text: label });
-                void runResults(p, "Updated 👇");
-              }}
+              onRefine={refine}
               focusInput={() => inputRef.current?.focus()}
             />
           ))}
@@ -400,6 +479,12 @@ export function ChatApp() {
       <Sheet open={sheet === "shortlist"} onClose={() => setSheet(null)} title={`Shortlist (${shortlist.length}/10)`}>
         <ShortlistPanel names={names} />
       </Sheet>
+      <Sheet open={sheet === "refine"} onClose={() => setSheet(null)} title="Refine matches">
+        <RefinePanel profile={profile} onRefine={refine} commuteEnabled={!!me?.commuteEnabled} />
+      </Sheet>
+      <Sheet open={sheet === "interests"} onClose={() => setSheet(null)} title="What do they enjoy?">
+        <InterestPicker initial={groupsInProfile(profile)} onDone={(ids, label) => refine(interestsFromGroups(ids), label)} />
+      </Sheet>
       <Sheet open={!!sheet && typeof sheet === "object"} onClose={() => setSheet(null)} title="On the map" tall>
         {sheet && typeof sheet === "object" && (
           <SchoolMap
@@ -440,7 +525,7 @@ function freshThread(p: Profile): Thread {
   return {
     answered: [],
     msgs: [
-      { id: uid(), kind: "bot", text: GREETING },
+      { id: uid(), kind: "welcome" },
       { id: uid(), kind: "bot", text: ASK_TEXT.score(p) },
       { id: uid(), kind: "ask", step: "score" },
     ],
@@ -452,6 +537,12 @@ function freshThread(p: Profile): Thread {
 interface ViewProps {
   m: Msg;
   last: boolean;
+  /** First bot message in a run shows the avatar; the rest are indented without it. */
+  avatar: boolean;
+  /** Typed answer to the score / postal question. Returns an error message, or null if accepted. */
+  onTyped: (step: Step, text: string) => string | null;
+  onRefineOpen: () => void;
+  onInterestsOpen: () => void;
   busy: boolean;
   pending: boolean;
   profile: Profile;
@@ -465,11 +556,28 @@ interface ViewProps {
   focusInput: () => void;
 }
 
-function BotRow({ children }: { children: React.ReactNode }) {
+function BotRow({ children, avatar = true }: { children: React.ReactNode; avatar?: boolean }) {
   return (
-    <div className="flex animate-rise items-start gap-2.5">
-      <Logo className="mt-0.5 h-8 w-8 shrink-0" />
+    <div className={`flex animate-rise items-start gap-2.5 ${avatar ? "" : "-mt-1.5"}`}>
+      {avatar ? <Logo className="mt-0.5 h-8 w-8 shrink-0" /> : <span className="w-8 shrink-0" aria-hidden />}
       <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
+function Welcome() {
+  return (
+    <div className="animate-rise overflow-hidden rounded-[28px] bg-brand p-5 text-white shadow-md">
+      <div className="flex items-center gap-3">
+        <Logo className="h-11 w-11 rounded-xl ring-2 ring-white/30" />
+        <p className="text-sm font-semibold text-white/85">Your S1 Posting guide</p>
+      </div>
+      <h1 className="mt-3 text-[26px] font-extrabold leading-tight tracking-tight">Let&apos;s find secondary schools that fit your child.</h1>
+      <ul className="mt-4 flex flex-wrap gap-2 text-[13px] font-semibold">
+        <li className="rounded-full bg-white/15 px-3 py-1.5">⏱️ About 1 minute</li>
+        <li className="rounded-full bg-white/15 px-3 py-1.5">👆 Mostly taps</li>
+        <li className="rounded-full bg-white/15 px-3 py-1.5">🔒 Stays on your phone</li>
+      </ul>
     </div>
   );
 }
@@ -477,9 +585,11 @@ function BotRow({ children }: { children: React.ReactNode }) {
 function MessageView(props: ViewProps) {
   const { m } = props;
   switch (m.kind) {
+    case "welcome":
+      return <Welcome />;
     case "bot":
       return (
-        <BotRow>
+        <BotRow avatar={props.avatar}>
           <p className="inline-block max-w-[46ch] rounded-3xl rounded-tl-md bg-card px-4 py-2.5 text-[15px] leading-relaxed shadow-sm">{m.text}</p>
         </BotRow>
       );
@@ -528,20 +638,98 @@ function MessageView(props: ViewProps) {
   }
 }
 
-function AskControls({ step, profile, onAnswer, commuteEnabled, focusInput }: ViewProps & { step: Step }) {
-  const [picked, setPicked] = useState<string[]>([]);
+/** A big, single-purpose input inside the thread (score, postal code), with its own Next button. */
+function InlineInput({
+  step,
+  label,
+  placeholder,
+  maxLength,
+  hint,
+  onTyped,
+  secondary,
+  numeric = true,
+  autoSubmitAt,
+}: {
+  step: Step;
+  label: string;
+  placeholder: string;
+  maxLength: number;
+  hint: string;
+  onTyped: ViewProps["onTyped"];
+  secondary: React.ReactNode;
+  /** Digits only, with the numeric keypad. Off for the free-text "say it all" box. */
+  numeric?: boolean;
+  /** Submit automatically once this many characters are typed (e.g. 6-digit postal codes). */
+  autoSubmitAt?: number;
+}) {
+  const [v, setV] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  return (
+    <form
+      className="ml-[42px] animate-rise space-y-2.5 rounded-3xl border border-line bg-card p-3 shadow-sm"
+      onSubmit={(e) => {
+        e.preventDefault();
+        setErr(onTyped(step, v));
+      }}
+    >
+      <label className="sr-only" htmlFor={`ask-${step}`}>
+        {label}
+      </label>
+      <div className="flex gap-2">
+        <input
+          id={`ask-${step}`}
+          autoFocus
+          inputMode={numeric ? "numeric" : "text"}
+          enterKeyHint="next"
+          autoComplete={step === "home" ? "postal-code" : "off"}
+          maxLength={maxLength}
+          placeholder={placeholder}
+          value={v}
+          onChange={(e) => {
+            const next = numeric ? e.target.value.replace(/\D/g, "") : e.target.value;
+            setV(next);
+            setErr(null);
+            if (autoSubmitAt && next.length === autoSubmitAt) setErr(onTyped(step, next));
+          }}
+          className={`min-w-0 flex-1 rounded-2xl bg-paper px-4 py-3 outline-none placeholder:text-muted focus:ring-2 focus:ring-brand/30 focus-visible:outline-none ${
+            numeric ? "text-2xl font-bold tracking-wide placeholder:text-base placeholder:font-medium placeholder:tracking-normal" : "text-lg font-semibold placeholder:text-[15px] placeholder:font-normal"
+          }`}
+        />
+        <button className="btn-primary px-6" disabled={!v}>
+          Next
+        </button>
+      </div>
+      <p className={`px-1 text-xs ${err ? "font-semibold text-reach" : "text-muted"}`} aria-live="polite">
+        {err ?? hint}
+      </p>
+      <div className="flex flex-wrap gap-2">{secondary}</div>
+    </form>
+  );
+}
+
+function AskControls({ step, profile, onAnswer, onTyped, commuteEnabled }: ViewProps & { step: Step }) {
   const row = "flex flex-wrap gap-2 pl-[42px] animate-rise";
 
   if (step === "score")
     return (
-      <div className={row}>
-        <button className="chip" onClick={focusInput}>
-          ⌨️ Type score
-        </button>
-        <button className="chip" onClick={() => onAnswer("score", { psleScore: null, postingGroup: null }, "Results aren't out yet — just browsing")}>
-          Not out yet — just browsing
-        </button>
-      </div>
+      <InlineInput
+        step="score"
+        label="PSLE score, and anything else you'd like to add"
+        placeholder="e.g. 12, 529889, girl, likes basketball"
+        maxLength={200}
+        numeric={false}
+        hint="Just the score is fine. Add your postal code, boy/girl or interests too and I'll skip those questions."
+        onTyped={onTyped}
+        secondary={
+          <button
+            type="button"
+            className="text-sm font-semibold text-brand"
+            onClick={() => onAnswer("score", { psleScore: null, postingGroup: null }, "Results aren't out yet — just browsing")}
+          >
+            Results not out yet? Just browse →
+          </button>
+        }
+      />
     );
   if (step === "pg")
     return (
@@ -555,14 +743,20 @@ function AskControls({ step, profile, onAnswer, commuteEnabled, focusInput }: Vi
     );
   if (step === "home")
     return (
-      <div className={row}>
-        <button className="chip" onClick={focusInput}>
-          ⌨️ Type postal code
-        </button>
-        <button className="chip" onClick={() => onAnswer("home", { home: null, homePostal: "" }, "Skip")}>
-          Skip
-        </button>
-      </div>
+      <InlineInput
+        step="home"
+        label="Home postal code"
+        placeholder="6-digit postal code"
+        maxLength={6}
+        autoSubmitAt={6}
+        hint="Only used to work out travel to each school."
+        onTyped={onTyped}
+        secondary={
+          <button type="button" className="text-sm font-semibold text-brand" onClick={() => onAnswer("home", { home: null, homePostal: "" }, "Skip")}>
+            Skip this →
+          </button>
+        }
+      />
     );
   if (step === "sex")
     return (
@@ -578,27 +772,16 @@ function AskControls({ step, profile, onAnswer, commuteEnabled, focusInput }: Vi
         </button>
       </div>
     );
-  if (step === "interests") {
-    const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
-    const done = () => {
-      const labels = INTEREST_GROUPS.filter((g) => picked.includes(g.id)).map((g) => `${g.emoji} ${g.label}`);
-      onAnswer("interests", interestsFromGroups(picked), labels.length ? labels.join(", ") : "Nothing in particular");
-    };
+  if (step === "interests")
+    // Only reached by threads saved before interests became an optional booster.
     return (
-      <div className="animate-rise space-y-3 pl-[42px]">
-        <div className="flex flex-wrap gap-2">
-          {INTEREST_GROUPS.map((g) => (
-            <button key={g.id} className={picked.includes(g.id) ? "chip-on" : "chip"} aria-pressed={picked.includes(g.id)} onClick={() => toggle(g.id)}>
-              <span aria-hidden>{g.emoji}</span> {g.label}
-            </button>
-          ))}
-        </div>
-        <button className="btn-primary" onClick={done}>
-          {picked.length ? `Done (${picked.length}) →` : "Nothing in particular →"}
-        </button>
+      <div className="animate-rise pl-[42px]">
+        <InterestPicker
+          initial={[]}
+          onDone={(ids, label) => onAnswer("interests", interestsFromGroups(ids), label)}
+        />
       </div>
     );
-  }
   if (step === "travel") {
     const opts: [string, Partial<Profile>][] = commuteEnabled
       ? [
@@ -626,7 +809,53 @@ function AskControls({ step, profile, onAnswer, commuteEnabled, focusInput }: Vi
   return null;
 }
 
-function ResultsView({ data, failed, onMap, onRefine, profile }: ViewProps & { data: MatchData | null; failed?: boolean }) {
+/** Optional one-tap extras that sharpen the matches. Shown only for what's still missing. */
+function Boosters({
+  profile,
+  onRefine,
+  onInterestsOpen,
+  onRefineOpen,
+}: Pick<ViewProps, "profile" | "onRefine" | "onInterestsOpen" | "onRefineOpen">) {
+  const chips: React.ReactNode[] = [];
+  if (!profile.childSex)
+    chips.push(
+      <button key="f" className="chip" onClick={() => onRefine({ childSex: "F" }, "👧 Girl")}>
+        👧 Girl
+      </button>,
+      <button key="m" className="chip" onClick={() => onRefine({ childSex: "M" }, "👦 Boy")}>
+        👦 Boy
+      </button>,
+    );
+  if (!profile.interestCcas.length && !profile.interestProgrammes.length)
+    chips.push(
+      <button key="i" className="chip" onClick={onInterestsOpen}>
+        ⭐ Add interests
+      </button>,
+    );
+  if (profile.home && !profile.maxMinutes && !profile.maxKm)
+    chips.push(
+      <button key="t" className="chip" onClick={onRefineOpen}>
+        🚇 Travel limit
+      </button>,
+    );
+  if (!chips.length) return null;
+  return (
+    <div className="space-y-1.5 pl-[42px]">
+      <p className="text-xs font-semibold text-muted">Sharpen your matches (optional, one tap):</p>
+      <div className="flex flex-wrap gap-2">{chips}</div>
+    </div>
+  );
+}
+
+function ResultsView({
+  data,
+  failed,
+  onMap,
+  onRefineOpen,
+  onRefine,
+  onInterestsOpen,
+  profile,
+}: ViewProps & { data: MatchData | null; failed?: boolean }) {
   if (failed)
     return (
       <BotRow>
@@ -664,6 +893,8 @@ function ResultsView({ data, failed, onMap, onRefine, profile }: ViewProps & { d
         )}
         {data.commutePending > 0 && <p className="mt-1 animate-pulse text-xs text-muted">Working out MRT/bus times…</p>}
       </div>
+
+      <Boosters profile={profile} onRefine={onRefine} onInterestsOpen={onInterestsOpen} onRefineOpen={onRefineOpen} />
 
       {data.items.length === 0 ? (
         <p className="pl-[42px] text-sm">No schools match all your answers. Try widening the travel time below.</p>
@@ -703,38 +934,16 @@ function ResultsView({ data, failed, onMap, onRefine, profile }: ViewProps & { d
         </div>
       )}
 
-      <div className="flex flex-wrap gap-2 pl-[42px]">
-        {data.items.length > 0 && (
-          <button className="chip" onClick={() => onMap(data.items)}>
-            🗺️ Map
-          </button>
-        )}
-        <Link className="chip" href="/match">
-          📋 See all {data.total}
+      <div className="grid grid-cols-3 gap-2 pl-[42px]">
+        <button className="chip justify-center" onClick={() => onMap(data.items)} disabled={data.items.length === 0}>
+          🗺️ Map
+        </button>
+        <Link className="chip justify-center" href="/match">
+          📋 All {data.total}
         </Link>
-        {profile.naturePref !== "co-ed" && (
-          <button className="chip" onClick={() => onRefine({ naturePref: "co-ed" }, "Only co-ed schools")}>
-            Co-ed only
-          </button>
-        )}
-        {profile.sapPref !== "prefer" && (
-          <button className="chip" onClick={() => onRefine({ sapPref: "prefer" }, "Prefer SAP schools")}>
-            Prefer SAP
-          </button>
-        )}
-        {profile.track !== "ip" && (
-          <button className="chip" onClick={() => onRefine({ track: "ip" }, "Interested in the IP")}>
-            IP schools
-          </button>
-        )}
-        {(profile.maxMinutes || profile.maxKm) && (
-          <button className="chip" onClick={() => onRefine({ maxMinutes: null, maxKm: null }, "Any travel time")}>
-            Widen travel
-          </button>
-        )}
-        <Link className="chip" href="/profile">
-          ✏️ Change answers
-        </Link>
+        <button className="chip justify-center" onClick={onRefineOpen}>
+          ⚙️ Refine
+        </button>
       </div>
     </div>
   );
@@ -801,6 +1010,111 @@ function AiView({ m, names, onApply, busy, last }: ViewProps & { m: Extract<Msg,
         )}
       </div>
     </BotRow>
+  );
+}
+
+/** Two-column grid of interest tiles with one Done button. */
+function InterestPicker({ initial, onDone }: { initial: string[]; onDone: (ids: string[], label: string) => void }) {
+  const [picked, setPicked] = useState<string[]>(initial);
+  const toggle = (id: string) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]));
+  const labels = INTEREST_GROUPS.filter((g) => picked.includes(g.id)).map((g) => `${g.emoji} ${g.label}`);
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
+        {INTEREST_GROUPS.map((g) => {
+          const on = picked.includes(g.id);
+          return (
+            <button
+              key={g.id}
+              aria-pressed={on}
+              onClick={() => toggle(g.id)}
+              className={`flex min-h-12 items-center gap-2 rounded-2xl border px-3 py-2 text-left text-sm font-semibold leading-tight transition active:scale-[0.97] ${
+                on ? "border-brand bg-brand text-white" : "border-line bg-card text-ink hover:border-brand"
+              }`}
+            >
+              <span aria-hidden className="text-xl">
+                {g.emoji}
+              </span>
+              {g.label}
+            </button>
+          );
+        })}
+      </div>
+      <button className="btn-primary w-full" onClick={() => onDone(picked, labels.length ? labels.join(", ") : "Nothing in particular")}>
+        {picked.length ? `Done · ${picked.length} picked` : "Skip — nothing in particular"}
+      </button>
+    </div>
+  );
+}
+
+/** Interest groups already reflected in the profile, to pre-select tiles. */
+function groupsInProfile(p: Profile): string[] {
+  return INTEREST_GROUPS.filter((g) => g.ccas.some((c) => p.interestCcas.includes(c)) || g.programmes.some((x) => p.interestProgrammes.includes(x))).map(
+    (g) => g.id,
+  );
+}
+
+type RefineFn = (patch: Partial<Profile>, label: string) => void;
+
+function RefineGroup({ heading, children }: { heading: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-2">
+      <h3 className="text-xs font-bold uppercase tracking-wide text-muted">{heading}</h3>
+      <div className="flex flex-wrap gap-2">{children}</div>
+    </section>
+  );
+}
+
+function RefineOpt({ on, label, patch, say, onRefine }: { on: boolean; label: string; patch: Partial<Profile>; say: string; onRefine: RefineFn }) {
+  return (
+    <button className={on ? "chip-on" : "chip"} aria-pressed={on} onClick={() => !on && onRefine(patch, say)}>
+      {label}
+    </button>
+  );
+}
+
+/** All the ways to adjust results, in one place instead of a row of chips. */
+function RefinePanel({ profile, onRefine, commuteEnabled }: { profile: Profile; onRefine: RefineFn; commuteEnabled: boolean }) {
+  const travel: [string, Partial<Profile>, boolean][] = commuteEnabled
+    ? [
+        ["≤ 30 min", { maxMinutes: 30, maxKm: null }, profile.maxMinutes === 30],
+        ["≤ 45 min", { maxMinutes: 45, maxKm: null }, profile.maxMinutes === 45],
+        ["≤ 60 min", { maxMinutes: 60, maxKm: null }, profile.maxMinutes === 60],
+        ["Any", { maxMinutes: null, maxKm: null }, !profile.maxMinutes && !profile.maxKm],
+      ]
+    : [
+        ["≤ 3 km", { maxKm: 3, maxMinutes: null }, profile.maxKm === 3],
+        ["≤ 5 km", { maxKm: 5, maxMinutes: null }, profile.maxKm === 5],
+        ["≤ 8 km", { maxKm: 8, maxMinutes: null }, profile.maxKm === 8],
+        ["Any", { maxKm: null, maxMinutes: null }, !profile.maxMinutes && !profile.maxKm],
+      ];
+  return (
+    <div className="space-y-5 pb-2">
+      <RefineGroup heading="School type">
+        <RefineOpt onRefine={onRefine} on={profile.naturePref === "any"} label="Any" patch={{ naturePref: "any" }} say="Any school type" />
+        <RefineOpt onRefine={onRefine} on={profile.naturePref === "co-ed"} label="Co-ed only" patch={{ naturePref: "co-ed" }} say="Co-ed schools only" />
+        <RefineOpt onRefine={onRefine} on={profile.naturePref === "single-sex"} label="Single-sex only" patch={{ naturePref: "single-sex" }} say="Single-sex schools only" />
+      </RefineGroup>
+      {profile.home && (
+        <RefineGroup heading="Travel">
+          {travel.map(([label, patch, on]) => (
+            <RefineOpt onRefine={onRefine} key={label} on={on} label={label} patch={patch} say={`Travel: ${label}`} />
+          ))}
+        </RefineGroup>
+      )}
+      <RefineGroup heading="Programmes">
+        <RefineOpt onRefine={onRefine} on={profile.track === "ip"} label="🎓 Interested in IP" patch={{ track: "ip" }} say="Interested in the Integrated Programme" />
+        <RefineOpt onRefine={onRefine} on={profile.track !== "ip"} label="Open to all" patch={{ track: "any" }} say="Open to all programmes" />
+      </RefineGroup>
+      <RefineGroup heading="SAP schools">
+        <RefineOpt onRefine={onRefine} on={profile.sapPref === "prefer"} label="Prefer SAP" patch={{ sapPref: "prefer" }} say="Prefer SAP schools" />
+        <RefineOpt onRefine={onRefine} on={profile.sapPref === "any"} label="No preference" patch={{ sapPref: "any" }} say="No SAP preference" />
+        <RefineOpt onRefine={onRefine} on={profile.sapPref === "avoid"} label="Not SAP" patch={{ sapPref: "avoid" }} say="Not SAP schools" />
+      </RefineGroup>
+      <Link href="/profile" className="btn-ghost w-full">
+        ✏️ Edit all answers
+      </Link>
+    </div>
   );
 }
 
