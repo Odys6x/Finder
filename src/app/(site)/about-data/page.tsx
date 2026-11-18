@@ -10,7 +10,31 @@ export default async function AboutData() {
   const fresh = await getDataFreshness();
   return (
     <div className="space-y-5">
-      <h1 className="text-2xl font-bold tracking-tight">Data sources &amp; FAQ</h1>
+      <h1 className="text-2xl font-bold tracking-tight">How it works &amp; data</h1>
+
+      <section className="card space-y-2 text-sm">
+        <h2 className="font-semibold">Safe, Borderline and Reach</h2>
+        <p className="text-muted">
+          We compare your child&apos;s PSLE score with each school&apos;s <strong>previous year&apos;s</strong> cut-off point
+          (COP) for their posting group. Lower scores are better.
+        </p>
+        <ul className="grid gap-2 sm:grid-cols-3">
+          <li className="rounded-2xl bg-safe-soft p-3 text-safe">
+            <strong>Safe</strong>: 3 or more points better than the COP
+          </li>
+          <li className="rounded-2xl bg-border-soft p-3 text-border">
+            <strong>Borderline</strong>: within 2 points either side
+          </li>
+          <li className="rounded-2xl bg-reach-soft p-3 text-reach">
+            <strong>Reach</strong>: more than 2 points above the COP
+          </li>
+        </ul>
+        <p className="text-muted">
+          COPs change every year and meeting one doesn&apos;t guarantee a place; tie-breakers apply. MOE suggests including 2–3
+          schools with less stringent COPs. Schools are ranked by fit to <em>your</em> answers (travel, interests,
+          preferences), never by whether a school is &quot;good&quot;.
+        </p>
+      </section>
 
       <section className="card space-y-2 text-sm">
         <h2 className="font-semibold">Where our data comes from</h2>

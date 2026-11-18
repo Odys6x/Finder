@@ -327,7 +327,7 @@ export function ProfileForm() {
         </p>
       </section>
 
-      <div className="no-print sticky bottom-20 z-20 flex flex-wrap gap-3 md:bottom-4">
+      <div className="no-print sticky bottom-4 z-20 flex flex-wrap gap-3">
         <button type="button" className="btn-primary shadow-lg" onClick={() => router.push("/match")} disabled={!profile.psleScore || !profile.postingGroup}>
           See my matches →
         </button>

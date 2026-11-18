@@ -54,7 +54,7 @@ export default async function SchoolPage(props: PageProps<"/schools/[code]">) {
         </div>
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <ShortlistButton code={s.school_code} />
-          <Link href={`/chat?school=${s.school_code}`} className="btn-ghost">
+          <Link href={`/?ask=${s.school_code}`} className="btn-ghost">
             Ask AI about this school
           </Link>
         </div>

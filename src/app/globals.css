@@ -1,20 +1,23 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
-  --color-ink: #13212e;
-  --color-muted: #5b6b79;
-  --color-line: #e2e8ee;
-  --color-paper: #f6f8fa;
+  --font-sans: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --color-ink: #1b2733;
+  --color-muted: #5d6874;
+  --color-line: #e6e0d5;
+  --color-paper: #f7f4ee;
+  --color-card: #ffffff;
   --color-brand: #0f6e6a;
   --color-brand-dark: #0b524f;
-  --color-brand-soft: #e3f2f1;
+  --color-brand-soft: #e2f1ef;
+  --color-accent: #e8603c;
+  --color-accent-soft: #fde8e0;
   --color-safe: #136c33;
-  --color-safe-soft: #e6f4ea;
-  --color-border: #a15c00;
-  --color-border-soft: #fdf1dc;
+  --color-safe-soft: #e3f3e7;
+  --color-border: #9a5600;
+  --color-border-soft: #fcefd6;
   --color-reach: #b42318;
-  --color-reach-soft: #fdecea;
+  --color-reach-soft: #fde9e7;
 }
 
 html {
@@ -26,35 +29,67 @@ body {
   color: var(--color-ink);
 }
 
-:focus-visible {
-  outline: 2px solid var(--color-brand);
-  outline-offset: 2px;
+/* In the base layer so utilities (e.g. focus-visible:outline-none) can override it. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
 }
 
-/* Small component primitives */
+/* Component primitives */
 @utility card {
-  @apply rounded-2xl border border-line bg-white p-4 shadow-[0_1px_2px_rgba(16,24,40,0.04)];
+  @apply rounded-3xl border border-line bg-card p-4 shadow-[0_1px_3px_rgba(27,39,51,0.06)];
 }
 @utility btn {
-  @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50;
+  @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-full px-5 text-sm font-semibold transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
 }
 @utility btn-primary {
   @apply btn bg-brand text-white hover:bg-brand-dark;
 }
 @utility btn-ghost {
-  @apply btn border border-line bg-white text-ink hover:bg-paper;
+  @apply btn border border-line bg-card text-ink hover:bg-paper;
 }
 @utility input {
-  @apply min-h-11 w-full rounded-xl border border-line bg-white px-3 text-base outline-none focus:border-brand;
+  @apply min-h-11 w-full rounded-2xl border border-line bg-card px-4 text-base outline-none focus:border-brand;
 }
 @utility label {
-  @apply mb-1 block text-sm font-medium text-ink;
+  @apply mb-1 block text-sm font-semibold text-ink;
 }
 @utility chip {
-  @apply inline-flex items-center gap-1 rounded-full border border-line bg-white px-3 py-1 text-xs font-medium text-ink;
+  @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-card px-3.5 py-1.5 text-sm font-medium text-ink transition hover:border-brand active:scale-[0.97];
 }
 @utility chip-on {
-  @apply chip border-brand bg-brand-soft text-brand-dark;
+  @apply chip border-brand bg-brand text-white hover:border-brand;
+}
+
+/* Horizontal card carousel */
+@utility snap-row {
+  @apply -mx-4 flex snap-x snap-mandatory gap-3 overflow-x-auto px-4 pb-2;
+  /* Snap cards to the padded edge, not the screen edge. */
+  scroll-padding-inline: 1rem;
+  scrollbar-width: none;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@utility animate-rise {
+  animation: rise 0.25s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 @media print {

@@ -65,6 +65,22 @@ No other setup is needed for local development:
 
 **Keep `COP_SOURCE_PERMITTED=false` for any paid launch until MOE gives written permission.**
 
+## How the app works (UI)
+
+The home page is a single chat-style thread (`src/components/thread/ChatApp.tsx`):
+
+1. **Guided questions with tap-to-answer chips:** score, posting group (only if ambiguous), postal code,
+   boy/girl, interests and travel time. These run locally (`src/lib/guided.ts`), so they're instant, free and
+   don't count against the free AI questions.
+2. **Results in the thread:** swipeable school cards (band or fit, ★ save, 2–3 short facts), band counts, the
+   balanced 6 (paid), a map sheet, "See all", and quick refinements (co-ed only, SAP, IP, widen travel).
+3. **Free text goes to the AI** (same tools and guardrails as before). Profile suggestions from the AI can be
+   saved with one tap, and the matches re-run.
+
+The thread is saved on the device. The ★ and ☰ in the header open the shortlist and the menu. Full pages
+(`/match`, `/schools`, `/schools/[code]`, `/shortlist`, `/profile`, `/pricing`, `/about-data`) live in the
+`src/app/(site)` route group with a slim header. `/chat` redirects to `/`.
+
 ## Architecture
 
 ```
